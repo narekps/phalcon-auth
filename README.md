@@ -1,0 +1,2 @@
+Auth component for Phalcon.
+-------
