@@ -72,9 +72,6 @@ class Auth extends Component
         if (!$cookieCfg->offsetExists('name')) {
             throw new InvalidConfigException('The parameter "cookie.name" must be set in config');
         }
-        if (!$cookieCfg->offsetExists('domain')) {
-            throw new InvalidConfigException('The parameter "cookie.domain" must be set in config');
-        }
     }
 
     /**

@@ -13,7 +13,7 @@ return [
             'name' => 'auth', // required
             'expire' => 3600 * 24 * 30, // optional, default 30 days
             'path' => '/', // optional default "/"
-            'domain' => '.hub.dev', // required, no default
+            'domain' => 'example.com', // optional, no default
             'secure' => false, // optional, default false
             'httpOnly' => false, // optional, default false
         ],
