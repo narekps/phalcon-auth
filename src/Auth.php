@@ -18,6 +18,11 @@ class Auth extends Component
     private const PASSWORD_COST = 14;
 
     /**
+     * Default cookie time to life.
+     */
+    private const COOKIE_TTL = 3600 * 24 * 30;
+
+    /**
      * @var array
      */
     private $config;
@@ -43,11 +48,27 @@ class Auth extends Component
     {
         $this->config = $config;
         if (!$this->config->offsetExists('identityClass')) {
-            throw new InvalidConfigException(__CLASS__ . '::identityClass must be set.');
+            throw new InvalidConfigException('The parameter "identityClass" must be set in config');
         }
         $this->identityClass = $this->config->get('identityClass');
         if (!is_subclass_of($this->identityClass, IdentityInterface::class)) {
-            throw new InvalidConfigException(__CLASS__ . '::identityClass must be implement IdentityInterface.');
+            throw new InvalidConfigException('The identityClass must be implement ' . IdentityInterface::class);
+        }
+        if (!$this->config->offsetExists('cryptSalt')) {
+            throw new InvalidConfigException('The parameter "cryptSalt" must be set in config');
+        }
+        if (!$this->config->offsetExists('sessionKey')) {
+            throw new InvalidConfigException('The parameter "sessionKey" must be set in config');
+        }
+        if (!$this->config->offsetExists('cookie')) {
+            throw new InvalidConfigException('The parameter "cookie" must be set in config');
+        }
+        $cookieCfg = $this->config->get('cookie');
+        if (!$cookieCfg->offsetExists('name')) {
+            throw new InvalidConfigException('The parameter "cookie.name" must be set in config');
+        }
+        if (!$cookieCfg->offsetExists('domain')) {
+            throw new InvalidConfigException('The parameter "cookie.domain" must be set in config');
         }
     }
 
@@ -87,11 +108,9 @@ class Auth extends Component
     public function getIdentity(): ?IdentityInterface
     {
         if (!$this->identity instanceof IdentityInterface) {
-            $key = $this->config->get('session_key');
-            if ($this->session->has($key)) {
-                $session = $this->session->get($key);
+            if ($sessionData = $this->getSessionData()) {
                 $class = $this->identityClass;
-                $identity = $class::findById($session['user_id']);
+                $identity = $class::findById($sessionData['user_id']);
                 if ($identity instanceof IdentityInterface) {
                     $this->identity = $identity;
                 }
@@ -106,14 +125,11 @@ class Auth extends Component
      */
     public function logout(): void
     {
-        if ($this->session->has($this->config->get('session_key'))) {
-            $this->session->remove($this->config->get('session_key'));
+        if ($this->session->has($this->config->get('sessionKey'))) {
+            $this->session->remove($this->config->get('sessionKey'));
         }
-        if ($this->cookies->has('RMU')) {
-            $this->cookies->get('RMU')->delete();
-        }
-        if ($this->cookies->has('RMT')) {
-            $this->cookies->get('RMT')->delete();
+        if ($this->cookies->has($this->config->get('cookie')->get('name'))) {
+            $this->cookies->get($this->config->get('cookie')->get('name'))->delete();
         }
         $this->identity = null;
 
@@ -142,16 +158,68 @@ class Auth extends Component
         }
 
         $this->identity = $identity;
-        $session = [
-            'user_id' => $identity->getIdentifier(),
-        ];
-        $this->session->set($this->config->get('session_key'), $session);
+        $this->saveSessionData($identity);
 
         if ($remember === true) {
-            $this->createRememberEnvironment($identity);
+            $this->saveCookieData($identity);
         }
 
         return true;
+    }
+
+    /**
+     * @param string $data
+     *
+     * @return string
+     */
+    private function encryptData(string $data): string
+    {
+        $cryptSalt = $this->config->get('cryptSalt');
+        $data = $this->crypt->encrypt($data, $cryptSalt);
+
+        return $data;
+    }
+
+    /**
+     * @param string $data
+     *
+     * @return string
+     */
+    private function decryptData(string $data): string
+    {
+        $cryptSalt = $this->config->get('cryptSalt');
+        $data = $this->crypt->decrypt($data, $cryptSalt);
+
+        return $data;
+    }
+
+    /**
+     * @param IdentityInterface $identity
+     */
+    private function saveSessionData(IdentityInterface $identity): void
+    {
+        $key = $this->config->get('sessionKey');
+        $data = [
+            'user_id' => $identity->getIdentifier(),
+        ];
+        $this->session->set($key, $this->encryptData(json_encode($data)));
+    }
+
+    /**
+     * @return array|null
+     */
+    private function getSessionData(): ?array
+    {
+        $data = null;
+        $key = $this->config->get('sessionKey');
+        if ($this->session->has($key)) {
+            $data = json_decode($this->decryptData($this->session->get($key)), true);
+            if (!is_array($data)) {
+                $data = null;
+            }
+        }
+
+        return $data;
     }
 
     /**
@@ -169,15 +237,71 @@ class Auth extends Component
     /**
      * @param IdentityInterface $identity
      */
-    public function createRememberEnvironment(IdentityInterface $identity): void
+    public function saveCookieData(IdentityInterface $identity): void
+    {
+        /** @var \Phalcon\Config $cookieCfg */
+        $cookieCfg = $this->config->get('cookie');
+        $key = $cookieCfg->get('name');
+        $domain = $cookieCfg->get('domain');
+        $expire = static::COOKIE_TTL;
+        if ($cookieCfg->offsetExists('expire')) {
+            $expire = $cookieCfg->get('expire');
+        }
+        $path = "/";
+        if ($cookieCfg->offsetExists('path')) {
+            $path = $cookieCfg->get('path');
+        }
+        $secure = false;
+        if ($cookieCfg->offsetExists('secure')) {
+            $secure = $cookieCfg->get('secure');
+        }
+        $httpOnly = false;
+        if ($cookieCfg->offsetExists('httpOnly')) {
+            $httpOnly = $cookieCfg->get('httpOnly');
+        }
+
+        $token = $this->generateCookieToken($identity);
+        $data = [
+            'user_id' => $identity->getIdentifier(),
+            'token'   => $token,
+        ];
+        $data = $this->encryptData(json_encode($data));
+        $expire += time();
+        $this->cookies->set($key, $data, $expire, $path, $secure, $domain, $httpOnly);
+
+        return;
+    }
+
+    /**
+     * @return array|null
+     */
+    private function getCookieData(): ?array
+    {
+        $data = null;
+        /** @var \Phalcon\Config $cookieCfg */
+        $cookieCfg = $this->config->get('cookie');
+        $key = $cookieCfg->get('name');
+        if ($this->cookies->has($key)) {
+            $data = json_decode($this->decryptData($this->cookies->get($key)), true);
+            if (!is_array($data)) {
+                $data = null;
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * @param IdentityInterface $identity
+     *
+     * @return string
+     */
+    private function generateCookieToken(IdentityInterface $identity)
     {
         $userAgent = $this->request->getUserAgent();
         $token = md5($identity->getEmail() . $identity->getPassword() . $userAgent);
-        $expire = time() + 86400 * 8;
-        $this->cookies->set('RMU', $identity->getIdentifier(), $expire);
-        $this->cookies->set('RMT', $token, $expire);
 
-        return;
+        return $token;
     }
 
     /**
@@ -185,7 +309,7 @@ class Auth extends Component
      */
     public function hasRememberMe(): bool
     {
-        return $this->cookies->has('RMU') && $this->cookies->has('RMT');
+        return $this->cookies->has($this->config->get('cookie')->get('name'));
     }
 
     /**
@@ -197,24 +321,26 @@ class Auth extends Component
             return false;
         }
 
-        $userId = $this->cookies->get('RMU')->getValue();
-        $cookieToken = $this->cookies->get('RMT')->getValue();
+        $cookieData = $this->getCookieData();
+        if (!is_array($cookieData)) {
+            return false;
+        }
+
+        $userId = $cookieData['user_id'];
+        $cookieToken = $cookieData['token'];
 
         $class = $this->identityClass;
         /** @var IdentityInterface $identity */
         $identity = $class::findById($userId);
         if ($identity) {
-            $userAgent = $this->request->getUserAgent();
-            $token = md5($identity->getEmail() . $identity->getPassword() . $userAgent);
+            $token = $this->generateCookieToken($identity);
 
             if ($cookieToken == $token) {
                 // Check if the cookie has not expired, TODO: save to database
                 //if ((time() - (86400 * 8)) < $remember->createdAt) {
 
-                $session = [
-                    'user_id' => $identity->getIdentifier(),
-                ];
-                $this->session->set($this->config->get('session_key'), $session);
+                $this->saveSessionData($identity);
+                $this->identity = $identity;
 
                 return true;
                 //}
