@@ -23,6 +23,11 @@ class Auth extends Component
     private const COOKIE_TTL = 3600 * 24 * 30;
 
     /**
+     * Failed login message;
+     */
+    private const FAILED_LOGIN_MESSAGE = 'Wrong email/password combination';
+
+    /**
      * @var array
      */
     private $config;
@@ -73,6 +78,81 @@ class Auth extends Component
     }
 
     /**
+     * @param string $email
+     * @param string $password
+     * @param bool   $remember
+     *
+     * @return bool
+     * @throws Exception
+     */
+    public function login(string $email, string $password, bool $remember = false): bool
+    {
+        $class = $this->identityClass;
+        $identity = $class::findByEmail($email);
+
+        if (!$identity instanceof IdentityInterface) {
+            throw new Exception(static::FAILED_LOGIN_MESSAGE);
+        }
+
+        if (!$this->verify($password, $identity->getPassword())) {
+            throw new Exception(static::FAILED_LOGIN_MESSAGE);
+        }
+
+        $this->identity = $identity;
+        $this->saveSessionData($identity);
+
+        if ($remember === true) {
+            $this->saveCookieData($identity);
+        }
+
+        return true;
+    }
+
+    /**
+     * Logout the current user
+     */
+    public function logout(): void
+    {
+        if ($this->session->has($this->config->get('sessionKey'))) {
+            $this->session->remove($this->config->get('sessionKey'));
+        }
+        if ($this->cookies->has($this->config->get('cookie')->get('name'))) {
+            $this->cookies->get($this->config->get('cookie')->get('name'))->delete();
+        }
+        $this->identity = null;
+
+        return;
+    }
+
+    /**
+     * @return bool
+     */
+    public function loggedIn(): bool
+    {
+        return $this->getIdentity() instanceof IdentityInterface;
+    }
+
+    /**
+     * @return IdentityInterface|null
+     */
+    public function getIdentity(): ?IdentityInterface
+    {
+        if (!$this->identity instanceof IdentityInterface) {
+            if ($sessionData = $this->getSessionData()) {
+                $class = $this->identityClass;
+                $identity = $class::findById($sessionData['user_id']);
+                if ($identity instanceof IdentityInterface) {
+                    $this->identity = $identity;
+                }
+            } else {
+                $this->loginWithRememberMe();
+            }
+        }
+
+        return $this->identity;
+    }
+
+    /**
      * @param string $plainPassword
      *
      * @return string
@@ -97,74 +177,9 @@ class Auth extends Component
      *
      * @return bool
      */
-    public function verify(string $password, string $hash): bool
+    private function verify(string $password, string $hash): bool
     {
         return password_verify($password, $hash);
-    }
-
-    /**
-     * @return IdentityInterface|null
-     */
-    public function getIdentity(): ?IdentityInterface
-    {
-        if (!$this->identity instanceof IdentityInterface) {
-            if ($sessionData = $this->getSessionData()) {
-                $class = $this->identityClass;
-                $identity = $class::findById($sessionData['user_id']);
-                if ($identity instanceof IdentityInterface) {
-                    $this->identity = $identity;
-                }
-            }
-        }
-
-        return $this->identity;
-    }
-
-    /**
-     * Logout the current user
-     */
-    public function logout(): void
-    {
-        if ($this->session->has($this->config->get('sessionKey'))) {
-            $this->session->remove($this->config->get('sessionKey'));
-        }
-        if ($this->cookies->has($this->config->get('cookie')->get('name'))) {
-            $this->cookies->get($this->config->get('cookie')->get('name'))->delete();
-        }
-        $this->identity = null;
-
-        return;
-    }
-
-    /**
-     * @param string $email
-     * @param string $password
-     * @param bool   $remember
-     *
-     * @return bool
-     * @throws Exception
-     */
-    public function login(string $email, string $password, bool $remember = false): bool
-    {
-        $class = $this->identityClass;
-        $identity = $class::findByEmail($email);
-
-        if (!$identity instanceof IdentityInterface) {
-            throw new Exception('Wrong email/password combination');
-        }
-
-        if (!$this->verify($password, $identity->getPassword())) {
-            throw new Exception('Wrong email/password combination');
-        }
-
-        $this->identity = $identity;
-        $this->saveSessionData($identity);
-
-        if ($remember === true) {
-            $this->saveCookieData($identity);
-        }
-
-        return true;
     }
 
     /**
@@ -172,10 +187,7 @@ class Auth extends Component
      */
     private function getCryptKey(): string
     {
-        $cryptSalt = $this->crypt->getKey();
-        if (!$cryptSalt) {
-            $cryptSalt = $this->config->get('cryptSalt');
-        }
+        $cryptSalt = $this->config->get('cryptSalt');
 
         return $cryptSalt;
     }
@@ -187,7 +199,9 @@ class Auth extends Component
      */
     private function encryptData(string $data): string
     {
-        $data = $this->crypt->encrypt($data, $this->getCryptKey());
+        if (empty($this->crypt->getKey())) {
+            $data = $this->crypt->encrypt($data, $this->getCryptKey());
+        }
 
         return $data;
     }
@@ -199,7 +213,9 @@ class Auth extends Component
      */
     private function decryptData(string $data): string
     {
-        $data = $this->crypt->decrypt($data, $this->getCryptKey());
+        if (empty($this->crypt->getKey())) {
+            $data = $this->crypt->decrypt($data, $this->getCryptKey());
+        }
 
         return $data;
     }
@@ -234,21 +250,9 @@ class Auth extends Component
     }
 
     /**
-     * @return bool
-     */
-    public function loggedIn(): bool
-    {
-        if ($this->hasRememberMe()) {
-            $this->loginWithRememberMe();
-        }
-
-        return $this->getIdentity() instanceof IdentityInterface;
-    }
-
-    /**
      * @param IdentityInterface $identity
      */
-    public function saveCookieData(IdentityInterface $identity): void
+    private function saveCookieData(IdentityInterface $identity): void
     {
         /** @var \Phalcon\Config $cookieCfg */
         $cookieCfg = $this->config->get('cookie');
@@ -307,7 +311,7 @@ class Auth extends Component
      *
      * @return string
      */
-    private function generateCookieToken(IdentityInterface $identity)
+    private function generateCookieToken(IdentityInterface $identity): string
     {
         $userAgent = $this->request->getUserAgent();
         $token = md5($identity->getEmail() . $identity->getPassword() . $userAgent);
@@ -318,7 +322,7 @@ class Auth extends Component
     /**
      * @return bool
      */
-    public function hasRememberMe(): bool
+    private function hasRememberMe(): bool
     {
         return $this->cookies->has($this->config->get('cookie')->get('name'));
     }
@@ -326,7 +330,7 @@ class Auth extends Component
     /**
      * @return bool
      */
-    public function loginWithRememberMe(): bool
+    private function loginWithRememberMe(): bool
     {
         if (!$this->hasRememberMe()) {
             return false;
