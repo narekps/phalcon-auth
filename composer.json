@@ -1,7 +1,6 @@
 {
   "name": "narekps/phalcon-auth",
   "description": "Auth component for Phalcon.",
-  "version": "1.0.0",
   "type": "library",
   "keywords": [
     "phalcon",
