@@ -54,7 +54,7 @@ class Auth extends Component
         if (!is_subclass_of($this->identityClass, IdentityInterface::class)) {
             throw new InvalidConfigException('The identityClass must be implement ' . IdentityInterface::class);
         }
-        if (!$this->config->offsetExists('cryptSalt')) {
+        if (!$this->crypt->getKey() && !$this->config->offsetExists('cryptSalt')) {
             throw new InvalidConfigException('The parameter "cryptSalt" must be set in config');
         }
         if (!$this->config->offsetExists('sessionKey')) {
@@ -168,14 +168,26 @@ class Auth extends Component
     }
 
     /**
+     * @return string
+     */
+    private function getCryptKey(): string
+    {
+        $cryptSalt = $this->crypt->getKey();
+        if (!$cryptSalt) {
+            $cryptSalt = $this->config->get('cryptSalt');
+        }
+
+        return $cryptSalt;
+    }
+
+    /**
      * @param string $data
      *
      * @return string
      */
     private function encryptData(string $data): string
     {
-        $cryptSalt = $this->config->get('cryptSalt');
-        $data = $this->crypt->encrypt($data, $cryptSalt);
+        $data = $this->crypt->encrypt($data, $this->getCryptKey());
 
         return $data;
     }
@@ -187,8 +199,7 @@ class Auth extends Component
      */
     private function decryptData(string $data): string
     {
-        $cryptSalt = $this->config->get('cryptSalt');
-        $data = $this->crypt->decrypt($data, $cryptSalt);
+        $data = $this->crypt->decrypt($data, $this->getCryptKey());
 
         return $data;
     }
