@@ -17,11 +17,11 @@ interface IdentityInterface
     public static function findByEmail(string $email): ?IdentityInterface;
 
     /**
-     * @param string $id
+     * @param string $identifier
      *
      * @return IdentityInterface|null
      */
-    public static function findById(string $id): ?IdentityInterface;
+    public static function findByIdentifier(string $identifier): ?IdentityInterface;
 
     /**
      * @return string
