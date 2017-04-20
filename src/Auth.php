@@ -137,7 +137,7 @@ class Auth extends Component
         if (!$this->identity instanceof IdentityInterface) {
             if ($sessionData = $this->getSessionData()) {
                 $class = $this->identityClass;
-                $identity = $class::findById($sessionData['user_id']);
+                $identity = $class::findByIdentifier($sessionData['user_id']);
                 if ($identity instanceof IdentityInterface) {
                     $this->identity = $identity;
                 }
