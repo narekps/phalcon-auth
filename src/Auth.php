@@ -343,7 +343,7 @@ class Auth extends Component
 
         $class = $this->identityClass;
         /** @var IdentityInterface $identity */
-        $identity = $class::findById($userId);
+        $identity = $class::findByIdentifier($userId);
         if ($identity) {
             $token = $this->generateCookieToken($identity);
 
